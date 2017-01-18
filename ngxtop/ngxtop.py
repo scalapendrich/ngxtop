@@ -77,7 +77,8 @@ except ImportError:
 from docopt import docopt
 import tabulate
 
-from config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
+from config_parser import detect_log_config, detect_log_format, detect_config_path, extract_variables, \
+    build_pattern, LOG_FORMAT_NAME_COMBINED, LOG_FORMAT_NAME_COMMON
 from utils import error_exit
 
 
@@ -187,7 +188,7 @@ def to_float(value):
 
 
 def parse_log(lines, pattern):
-    matches = (pattern.match(l) for l in lines)
+    matches = (pattern.match(l) for l in iter(lines.readline, ''))
     records = (m.groupdict() for m in matches if m is not None)
     records = map_field('status', to_int, records)
     records = add_field('status_type', parse_status_type, records)
@@ -370,11 +371,18 @@ def setup_reporter(processor, arguments):
 def process(arguments):
     access_log = arguments['--access-log']
     log_format = arguments['--log-format']
+
     if access_log is None and not sys.stdin.isatty():
         # assume logs can be fetched directly from stdin when piped
         access_log = 'stdin'
+
     if access_log is None:
         access_log, log_format = detect_log_config(arguments)
+
+    if log_format != LOG_FORMAT_NAME_COMBINED:
+        log_format = detect_log_format(arguments)
+
+    print ('Log format: %s' % log_format)
 
     logging.info('access_log: %s', access_log)
     logging.info('log_format: %s', log_format)

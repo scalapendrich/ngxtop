@@ -14,16 +14,16 @@ from utils import choose_one, error_exit
 REGEX_SPECIAL_CHARS = r'([\.\*\+\?\|\(\)\{\}\[\]])'
 REGEX_LOG_FORMAT_VARIABLE = r'\$([a-zA-Z0-9\_]+)'
 
-LOG_FORMAT_COMBINED = '$remote_addr $remote_user [$time_local] $http_x_forwarded_proto "$request" ' \
-                        '$status $body_bytes_sent "$http_referer" ' \
-                        '"$http_user_agent" $hostname $upstream_response_time|$request_time '
+LOG_FORMAT_COMBINED = '$remote_addr - $remote_user [$time_local] ' \
+                      '"$request" $status $body_bytes_sent ' \
+                      '"$http_referer" "$http_user_agent"'
 
-# LOG_FORMAT_COMBINED = '$remote_addr - $remote_user [$time_local] ' \
-#                       '"$request" $status $body_bytes_sent ' \
-#                       '"$http_referer" "$http_user_agent"'
-LOG_FORMAT_COMMON  = '$remote_addr - $remote_user [$time_local] ' \
+LOG_FORMAT_COMMON = '$remote_addr - $remote_user [$time_local] ' \
                       '"$request" $status $body_bytes_sent ' \
                       '"$http_x_forwarded_for"'
+
+LOG_FORMAT_NAME_COMBINED = 'combined'
+LOG_FORMAT_NAME_COMMON = 'common'
 
 # common parser element
 semicolon = Literal(';').suppress()
@@ -70,7 +70,7 @@ def get_access_logs(config):
             # nothing to process here
             continue
 
-        format_name = 'combined'
+        format_name = LOG_FORMAT_NAME_COMBINED
         if len(directive) > 2 and '=' not in directive[2]:
             format_name = directive[2]
 
@@ -112,7 +112,7 @@ def detect_log_config(arguments):
     log_formats = dict(get_log_formats(config_str))
     if len(access_logs) == 1:
         log_path, format_name = list(access_logs.items())[0]
-        if format_name == 'combined':
+        if format_name == LOG_FORMAT_NAME_COMBINED:
             return log_path, LOG_FORMAT_COMBINED
         if format_name not in log_formats:
             error_exit('Incorrect format name set in config for access log file "%s"' % log_path)
@@ -125,6 +125,25 @@ def detect_log_config(arguments):
     if format_name not in log_formats:
         error_exit('Incorrect format name set in config for access log file "%s"' % log_path)
     return log_path, log_formats[format_name]
+
+
+def detect_log_format(arguments):
+
+    config = arguments['--config']
+    log_format = arguments['--log-format']
+
+    if not config or not log_format:
+        return LOG_FORMAT_COMBINED
+
+    with open(config) as f:
+        config_str = f.read()
+
+    log_formats = dict(get_log_formats(config_str))
+
+    if not log_formats[log_format]:
+        return LOG_FORMAT_COMBINED
+
+    return log_formats[log_format]
 
 
 def build_pattern(log_format):
