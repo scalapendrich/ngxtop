@@ -382,7 +382,7 @@ def process(arguments):
     if log_format != LOG_FORMAT_NAME_COMBINED:
         log_format = detect_log_format(arguments)
 
-    print ('Log format: %s' % log_format)
+    print ('Log format: %s \n' % log_format)
 
     logging.info('access_log: %s', access_log)
     logging.info('log_format: %s', log_format)
