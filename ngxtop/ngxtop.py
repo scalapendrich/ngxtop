@@ -217,8 +217,10 @@ class SQLProcessor(object):
         insert = 'insert into log (%s) values (%s)' % (self.column_list, self.holder_list)
         logging.info('sqlite insert: %s', insert)
         with closing(self.conn.cursor()) as cursor:
+            print('Start time: %s' % time.time())
             for r in records:
                 cursor.execute(insert, r)
+            print('Start end: %s' % time.time())
 
     def report(self):
         if not self.begin:
@@ -270,15 +272,15 @@ def process_log(lines, pattern, processor, arguments):
     if filter_exp:
         records = (r for r in records if eval(filter_exp, {}, r))
 
-    time_from_exp = arguments['--time-from']
-    time_to_exp = arguments['--time-to']
-    if time_from_exp and time_to_exp:
-        records = filter_time(arguments['--time-format'], time_from_exp, time_to_exp, records)
+    # time_from_exp = arguments['--time-from']
+    # time_to_exp = arguments['--time-to']
+    # if time_from_exp and time_to_exp:
+    #     records = filter_time(arguments['--time-format'], time_from_exp, time_to_exp, records)
 
     processor.process(records)
 
-    if time_from_exp and time_to_exp:
-        print ('Statistics for time period from %s to %s \n' % (time_from_exp, time_to_exp))
+    # if time_from_exp and time_to_exp:
+    #     print ('Statistics for time period from %s to %s \n' % (time_from_exp, time_to_exp))
 
     print(processor.report())  # this will only run when start in --no-follow mode
 
