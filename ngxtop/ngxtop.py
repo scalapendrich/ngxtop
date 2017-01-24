@@ -156,6 +156,15 @@ def add_field(field, func, dict_sequence):
         yield item
 
 
+def filter_time(time_format, time_from, time_to, records):
+        for r in records:
+            t = time.strptime(r['time_local'].split()[0], time_format)
+            if not time_to <= t >= time_from:
+                continue
+            else:
+                yield r
+
+
 def trace(sequence, phase=''):
     for item in sequence:
         logging.debug('%s:\n%s', phase, item)
@@ -187,9 +196,11 @@ def to_float(value):
     return float(value) if value and value != '-' else 0.0
 
 
-def parse_log(lines, pattern):
+def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
     matches = (pattern.match(l) for l in iter(lines.readline, ''))
     records = (m.groupdict() for m in matches if m is not None)
+    if time_from and time_to and time_format:
+        records = filter_time(time_format, time_from, time_to, records)
     records = map_field('status', to_int, records)
     records = add_field('status_type', parse_status_type, records)
     records = add_field('bytes_sent', lambda r: r['body_bytes_sent'], records)
@@ -217,8 +228,10 @@ class SQLProcessor(object):
         insert = 'insert into log (%s) values (%s)' % (self.column_list, self.holder_list)
         logging.info('sqlite insert: %s', insert)
         with closing(self.conn.cursor()) as cursor:
+            print ('Start time: %s ' % str(time.time()))
             for r in records:
                 cursor.execute(insert, r)
+            print ('End time: %s ' % str(time.time()))
 
     def report(self):
         if not self.begin:
@@ -264,16 +277,19 @@ def process_log(lines, pattern, processor, arguments):
     if pre_filer_exp:
         lines = (line for line in lines if eval(pre_filer_exp, {}, dict(line=line)))
 
-    records = parse_log(lines, pattern)
+    time_from_exp = arguments['--time-from']
+    time_to_exp = arguments['--time-to']
+    time_format = arguments['--time-format']
+    if time_from_exp and time_to_exp:
+        time_from = time.strptime(time_from_exp, time_format)
+        time_to = time.strptime(time_to_exp, time_format)
+        records = parse_log(lines, pattern, time_from, time_to, time_format)
+    else:
+        records = parse_log(lines, pattern)
 
     filter_exp = arguments['--filter']
     if filter_exp:
         records = (r for r in records if eval(filter_exp, {}, r))
-
-    time_from_exp = arguments['--time-from']
-    time_to_exp = arguments['--time-to']
-    if time_from_exp and time_to_exp:
-        records = filter_time(arguments['--time-format'], time_from_exp, time_to_exp, records)
 
     processor.process(records)
 
@@ -281,15 +297,6 @@ def process_log(lines, pattern, processor, arguments):
         print ('Statistics for time period from %s to %s \n' % (time_from_exp, time_to_exp))
 
     print(processor.report())  # this will only run when start in --no-follow mode
-
-
-def filter_time(time_format, time_from_exp, time_to_exp, records):
-        time_from = time.strptime(time_from_exp, time_format)
-        time_to = time.strptime(time_to_exp, time_format)
-        for r in records:
-            t = time.strptime(r['time_local'].split()[0], time_format)
-            if time_to <= t >= time_from:
-                yield r
 
 
 def build_processor(arguments):
