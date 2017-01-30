@@ -123,6 +123,7 @@ def follow(the_file):
     """
     Follow a given file and yield new lines when they are available, like `tail -f`.
     """
+
     with open(the_file) as f:
         f.seek(0, 2)  # seek to eof
         while True:
@@ -131,7 +132,6 @@ def follow(the_file):
                 time.sleep(0.1)  # sleep briefly before trying again
                 continue
             yield line
-
 
 def map_field(field, func, dict_sequence):
     """
@@ -198,7 +198,7 @@ def to_float(value):
 
 
 def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
-    matches = (pattern.match(l) for l in lines)
+    matches = (pattern.match(l) for l in iter(lines.readline, ''))
     records = (m.groupdict() for m in matches if m is not None)
     if time_from and time_to and time_format:
         records = filter_time(time_format, time_from, time_to, records)
@@ -276,14 +276,6 @@ def process_log(lines, pattern, processor, arguments):
     if pre_filer_exp:
         lines = (line for line in lines if eval(pre_filer_exp, {}, dict(line=line)))
 
-    # time_from_exp = arguments['--time-from']
-    # time_to_exp = arguments['--time-to']
-    # time_format = arguments['--time-format']
-    # if time_from_exp and time_to_exp:
-    #     time_from = time.strptime(time_from_exp, time_format)
-    #     time_to = time.strptime(time_to_exp, time_format)
-    #     records = parse_log(lines, pattern, time_from, time_to, time_format)
-    # else:
     records = parse_log(lines, pattern)
 
     filter_exp = arguments['--filter']
@@ -291,9 +283,6 @@ def process_log(lines, pattern, processor, arguments):
         records = (r for r in records if eval(filter_exp, {}, r))
 
     processor.process(records)
-
-    # if time_from_exp and time_to_exp:
-    #     print ('Statistics for time period from %s to %s \n' % (time_from_exp, time_to_exp))
 
     print(processor.report())  # this will only run when start in --no-follow mode
 
@@ -404,84 +393,98 @@ def process(arguments):
 
     source = build_source(access_log, arguments)
     pattern = build_pattern(log_format)
-
-    if arguments['--no-follow']:
-        #print ('Time start %s ' % time.time())
-        start, end = filter_time_range(arguments, access_log, pattern)
-        #print ('Time end %s ' % time.time())
-
-        source2 = []
-        n = 0
-
-        #print ('Time start filter log %s ' % time.time())
-        for line in source:
-            n += 1
-            if n >= start:
-                source2.append(line)
-            if n > end:
-                break
-        #print ('Time end filter log %s ' % time.time())
-        source.close()
-        source = source2
-
     processor = build_processor(arguments)
     setup_reporter(processor, arguments)
+
+    if arguments['--no-follow']:    # when parse existing log
+
+        # get start and end byte of file (part of file to process)
+        start, end = get_payload(arguments, access_log, pattern)
+        source.seek(start, 0)
+        file_part = source.read(end - start)
+
+        # move part of file to temp file as source should be a file object
+        import tempfile
+
+        temp = tempfile.TemporaryFile()
+        temp.write(file_part)
+        temp.seek(0)
+
+        source.close()
+
+        source = temp
+
     process_log(source, pattern, processor, arguments)
+    source.close()
 
 
-def filter_time_range(arguments, access_log, pattern):
+def get_payload(arguments, access_log, pattern):
 
     time_from = arguments['--time-from']
     time_to = arguments['--time-to']
     time_format = arguments['--time-format']
 
-    with open(access_log) as f:
-        lines_total = len(f.readlines())
+    if time_from and time_to:
+        print ('Statistics for time period from %s to %s \n' % (time_from, time_to))
+    else:
+        return 0, os.stat(access_log)
 
-    start = datetime.datetime.strptime(time_from, time_format)
-    end = datetime.datetime.strptime(time_to, time_format)
+    date_start = datetime.datetime.strptime(time_from, time_format)
+    date_end = datetime.datetime.strptime(time_to, time_format)
 
-    result_start = get_line_number(lines_total, access_log, pattern, time_format, start)
-    result_end = get_line_number(lines_total, access_log, pattern, time_format, end)
+    start_byte = get_position(access_log, pattern, time_format, date_start)
+    end_byte = get_position(access_log, pattern, time_format, date_end)
 
-    # print ('Line start: %s' % result_start)
-    # print ('Line end: %s' % result_end)
-
-    return result_start, result_end
+    return start_byte, end_byte
 
 
-def get_line_number(lines_total, access_log, pattern, time_format, t_compare):
+def get_position(access_log, pattern, time_format, seek_time):
 
-    import linecache
+    stat = os.stat(access_log)
 
-    search = True
-    min = 0
-    max = lines_total
-    line_number = 0
-    l = None
-    while search:
-        line_number = max-(max-min)/2
-        line = linecache.getline(access_log, line_number)
-        matches = pattern.match(line)
-        time_log = matches.groupdict()['time_local'].split()[0]
-        t = datetime.datetime.strptime(time_log, time_format)
+    min_pos = 0
+    max_pos = stat.st_size
 
-        if t < t_compare:
-            min = line_number
+    with open(access_log, 'r') as f:
 
-        if t > t_compare:
-            max = line_number
+        while True:
+            position = round((max_pos + min_pos)/2)
+            f.seek(position, 0)
 
-        if t == t_compare or min == max:
-            search = False
-            l = line
+            # get and parse line
+            pos_start, pos_end = None, None
+            while True:
+                data = f.read(1)
+                if data == '\n':
+                    if not pos_start:
+                        f.read(1)
+                        pos_start = f.tell()
+                        continue
+                    if pos_start and not pos_end:
+                        pos_end = f.tell()
+                        break
 
-        diff = t_compare - t
+            f.seek(pos_start)
 
-        #print ('min: %s, max: %s, line number %s, time diff %s' % (min, max, line_number, diff.seconds))
+            # get whole next line (without new line symbols)
+            line = f.read(pos_end-pos_start-1)
 
-    #print (l)
-    return line_number
+            matches = pattern.match(line)
+            timestamp = matches.groupdict()['time_local'].split()[0]
+            t = datetime.datetime.strptime(timestamp, time_format)
+
+            if t < seek_time:
+                min_pos = position
+
+            if t > seek_time:
+                max_pos = position
+
+            if t == seek_time or min_pos == max_pos:
+                break
+
+        f.seek(pos_start, 0)
+
+    return pos_start
 
 
 def main():
@@ -497,10 +500,8 @@ def main():
 
     try:
         time_start = time.time()
-        print ('Time start %s \n' % time_start)
         process(args)
         time_end = time.time()
-        print ('Time end %s \n' % time_end)
         print ('Time total %s, sec ' % str(round(time_end - time_start)))
 
     except KeyboardInterrupt:
