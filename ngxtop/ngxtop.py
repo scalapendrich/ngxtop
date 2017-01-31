@@ -433,17 +433,18 @@ def get_payload(arguments, access_log, pattern):
     date_end = datetime.datetime.strptime(time_to, time_format)
 
     start_byte = get_position(access_log, pattern, time_format, date_start)
-    end_byte = get_position(access_log, pattern, time_format, date_end)
+    end_byte = get_position(access_log, pattern, time_format, date_end, False)
 
     return start_byte, end_byte
 
 
-def get_position(access_log, pattern, time_format, seek_time):
+def get_position(access_log, pattern, time_format, seek_time, start_position=True):
 
     stat = os.stat(access_log)
-
     min_pos = 0
     max_pos = stat.st_size
+
+    pos_start, pos_end = None, None
 
     with open(access_log, 'r') as f:
 
@@ -451,40 +452,49 @@ def get_position(access_log, pattern, time_format, seek_time):
             position = round((max_pos + min_pos)/2)
             f.seek(position, 0)
 
-            # get and parse line
+            # find end of line
             pos_start, pos_end = None, None
+
             while True:
                 data = f.read(1)
+                if data == '\n' or f.tell() == stat.st_size:  # or end of file
+                    pos_end = f.tell()
+                    break
+
+            # find the beginning of a line
+            while True:
+                # check if it's the beginning of a file
+                if f.tell() <= 1:
+                    pos_start = f.tell()
+                    break
+
+                f.seek(-2, 1)
+                data = f.read(1)
                 if data == '\n':
-                    if not pos_start:
-                        f.read(1)
-                        pos_start = f.tell()
-                        continue
-                    if pos_start and not pos_end:
-                        pos_end = f.tell()
-                        break
+                    pos_start = f.tell()
+                    break
 
-            f.seek(pos_start)
-
-            # get whole next line (without new line symbols)
+            f.seek(pos_start, 0)
             line = f.read(pos_end-pos_start-1)
-
             matches = pattern.match(line)
             timestamp = matches.groupdict()['time_local'].split()[0]
             t = datetime.datetime.strptime(timestamp, time_format)
 
             if t < seek_time:
-                min_pos = position
+                min_pos = pos_start
 
             if t > seek_time:
-                max_pos = position
+                max_pos = pos_start
 
-            if t == seek_time or min_pos == max_pos:
+            if t == seek_time or (max_pos - min_pos) < 10:
                 break
 
-        f.seek(pos_start, 0)
-
-    return pos_start
+        if start_position:
+            print ('Actual time start: ' + str(t))
+            return pos_start
+        else:
+            print ('Actual time end: ' + str(t))
+            return pos_end
 
 
 def main():
