@@ -440,45 +440,53 @@ def get_payload(arguments, access_log, pattern):
 
 def get_position(access_log, pattern, time_format, seek_time, start_position=True):
 
-    stat = os.stat(access_log)
-    min_pos = 0
-    max_pos = stat.st_size
-
     pos_start, pos_end = None, None
+
+    def find_line(min_, max_):
+        position = round((max_ + min_)/2)
+        f.seek(position, 0)
+
+        # find end of line
+        p_start, p_end = None, None
+
+        while True:
+            data = f.read(1)
+            if data == '\n' or f.tell() == stat.st_size:  # or end of file
+                p_end = f.tell()
+                break
+
+        # find the beginning of a line
+        while True:
+            # check if it's the beginning of a file
+            if f.tell() <= 1:
+                p_start = f.tell()
+                break
+
+            f.seek(-2, 1)
+            data = f.read(1)
+            if data == '\n':
+                p_start = f.tell()
+                break
+
+        return p_start, p_end
+
+    def get_timestamp(start, end):
+        f.seek(start, 0)
+        line = f.read(end-start-1)
+        matches = pattern.match(line)
+        timestamp = matches.groupdict()['time_local'].split()[0]
+        return datetime.datetime.strptime(timestamp, time_format)
 
     with open(access_log, 'r') as f:
 
+        stat = os.stat(access_log)
+        min_pos = 0
+        max_pos = stat.st_size
+
         while True:
-            position = round((max_pos + min_pos)/2)
-            f.seek(position, 0)
+            pos_start, pos_end = find_line(min_pos, max_pos)
 
-            # find end of line
-            pos_start, pos_end = None, None
-
-            while True:
-                data = f.read(1)
-                if data == '\n' or f.tell() == stat.st_size:  # or end of file
-                    pos_end = f.tell()
-                    break
-
-            # find the beginning of a line
-            while True:
-                # check if it's the beginning of a file
-                if f.tell() <= 1:
-                    pos_start = f.tell()
-                    break
-
-                f.seek(-2, 1)
-                data = f.read(1)
-                if data == '\n':
-                    pos_start = f.tell()
-                    break
-
-            f.seek(pos_start, 0)
-            line = f.read(pos_end-pos_start-1)
-            matches = pattern.match(line)
-            timestamp = matches.groupdict()['time_local'].split()[0]
-            t = datetime.datetime.strptime(timestamp, time_format)
+            t = get_timestamp(pos_start, pos_end)
 
             if t < seek_time:
                 min_pos = pos_start
@@ -489,11 +497,40 @@ def get_position(access_log, pattern, time_format, seek_time, start_position=Tru
             if t == seek_time or (max_pos - min_pos) < 10:
                 break
 
-        if start_position:
-            print ('Actual time start: ' + str(t))
+        if start_position and pos_start > 1:
+
+            # get previous line, until time is equal to seek_time value
+
+            # time for logging
+            actual_time_start = get_timestamp(pos_start, pos_end)
+
+            pos_start_prev, pos_end_prev = find_line(pos_start - 1, pos_start - 1)
+            prev_line_time = get_timestamp(pos_start_prev, pos_end_prev)
+
+            if prev_line_time == seek_time:
+                while prev_line_time == seek_time and pos_start > 1:
+                    pos_start, pos_end = pos_start_prev, pos_end_prev
+                    actual_time_start = prev_line_time
+                    pos_start_prev, pos_end_prev = find_line(pos_start - 1, pos_start - 1)
+                    prev_line_time = get_timestamp(pos_start, pos_end)
+
+            print ('Actual time start: ' + str(actual_time_start))
             return pos_start
         else:
-            print ('Actual time end: ' + str(t))
+            if pos_end < stat.st_size:
+                actual_time_end = get_timestamp(pos_start, pos_end)
+
+                pos_start_next, pos_end_next = find_line(pos_end + 1, pos_end + 1)
+                next_line_time = get_timestamp(pos_start_next, pos_end_next)
+
+                if next_line_time == seek_time:
+                    while next_line_time == seek_time and pos_end < stat.st_size:
+                        pos_start, pos_end = pos_start_next, pos_end_next
+                        actual_time_end = next_line_time
+                        pos_start_next, pos_end_next = find_line(pos_end + 1, pos_end + 1)
+                        next_line_time = get_timestamp(pos_start, pos_end)
+
+            print ('Actual time end: ' + str(actual_time_end))
             return pos_end
 
 
