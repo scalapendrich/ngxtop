@@ -157,15 +157,6 @@ def add_field(field, func, dict_sequence):
         yield item
 
 
-def filter_time(time_format, time_from, time_to, records):
-        for r in records:
-            t = time.strptime(r['time_local'].split()[0], time_format)
-            if not time_to <= t >= time_from:
-                continue
-            else:
-                yield r
-
-
 def trace(sequence, phase=''):
     for item in sequence:
         logging.debug('%s:\n%s', phase, item)
@@ -200,8 +191,6 @@ def to_float(value):
 def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
     matches = (pattern.match(l) for l in iter(lines.readline, ''))
     records = (m.groupdict() for m in matches if m is not None)
-    if time_from and time_to and time_format:
-        records = filter_time(time_format, time_from, time_to, records)
     records = map_field('status', to_int, records)
     records = add_field('status_type', parse_status_type, records)
     records = add_field('bytes_sent', lambda r: r['body_bytes_sent'], records)
@@ -363,61 +352,6 @@ def setup_reporter(processor, arguments):
     signal.setitimer(signal.ITIMER_REAL, 0.1, interval)
 
 
-def process(arguments):
-    access_log = arguments['--access-log']
-    log_format = arguments['--log-format']
-
-    if access_log is None and not sys.stdin.isatty():
-        # assume logs can be fetched directly from stdin when piped
-        access_log = 'stdin'
-
-    if access_log is None:
-        access_log, log_format = detect_log_config(arguments)
-
-    if log_format != LOG_FORMAT_NAME_COMBINED:
-        log_format = detect_log_format(arguments)
-
-    print ('Log format: %s \n' % log_format)
-
-    logging.info('access_log: %s', access_log)
-    logging.info('log_format: %s', log_format)
-    if access_log != 'stdin' and not os.path.exists(access_log):
-        error_exit('access log file "%s" does not exist' % access_log)
-
-    if arguments['info']:
-        print('nginx configuration file:\n ', detect_config_path())
-        print('access log file:\n ', access_log)
-        print('access log format:\n ', log_format)
-        print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
-        return
-
-    source = build_source(access_log, arguments)
-    pattern = build_pattern(log_format)
-    processor = build_processor(arguments)
-    setup_reporter(processor, arguments)
-
-    if arguments['--no-follow']:    # when parse existing log
-
-        # get start and end byte of file (part of file to process)
-        start, end = get_payload(arguments, access_log, pattern)
-        source.seek(start, 0)
-        file_part = source.read(end - start)
-
-        # move part of file to temp file as source should be a file object
-        import tempfile
-
-        temp = tempfile.TemporaryFile()
-        temp.write(file_part)
-        temp.seek(0)
-
-        source.close()
-
-        source = temp
-
-    process_log(source, pattern, processor, arguments)
-    source.close()
-
-
 def get_payload(arguments, access_log, pattern):
 
     time_from = arguments['--time-from']
@@ -532,6 +466,61 @@ def get_position(access_log, pattern, time_format, seek_time, start_position=Tru
 
             print ('Actual time end: ' + str(actual_time_end))
             return pos_end
+
+
+def process(arguments):
+    access_log = arguments['--access-log']
+    log_format = arguments['--log-format']
+
+    if access_log is None and not sys.stdin.isatty():
+        # assume logs can be fetched directly from stdin when piped
+        access_log = 'stdin'
+
+    if access_log is None:
+        access_log, log_format = detect_log_config(arguments)
+
+    if log_format != LOG_FORMAT_NAME_COMBINED:
+        log_format = detect_log_format(arguments)
+
+    print ('Log format: %s \n' % log_format)
+
+    logging.info('access_log: %s', access_log)
+    logging.info('log_format: %s', log_format)
+    if access_log != 'stdin' and not os.path.exists(access_log):
+        error_exit('access log file "%s" does not exist' % access_log)
+
+    if arguments['info']:
+        print('nginx configuration file:\n ', detect_config_path())
+        print('access log file:\n ', access_log)
+        print('access log format:\n ', log_format)
+        print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
+        return
+
+    source = build_source(access_log, arguments)
+    pattern = build_pattern(log_format)
+    processor = build_processor(arguments)
+    setup_reporter(processor, arguments)
+
+    if arguments['--no-follow']:    # when parse existing log
+
+        # get start and end byte of file (part of file to process)
+        start, end = get_payload(arguments, access_log, pattern)
+        source.seek(start, 0)
+        file_part = source.read(end - start)
+
+        # move part of file to temp file as source should be a file object
+        import tempfile
+
+        temp = tempfile.TemporaryFile()
+        temp.write(file_part)
+        temp.seek(0)
+
+        source.close()
+
+        source = temp
+
+    process_log(source, pattern, processor, arguments)
+    source.close()
 
 
 def main():
