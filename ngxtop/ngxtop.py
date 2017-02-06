@@ -218,10 +218,8 @@ class SQLProcessor(object):
         insert = 'insert into log (%s) values (%s)' % (self.column_list, self.holder_list)
         logging.info('sqlite insert: %s', insert)
         with closing(self.conn.cursor()) as cursor:
-            print('Start time: %s' % time.time())
             for r in records:
                 cursor.execute(insert, r)
-            print('Start end: %s' % time.time())
 
     def report(self):
         if not self.begin:
@@ -515,11 +513,9 @@ def main():
 
     try:
         time_start = time.time()
-        print ('Time start %s \n' % time_start)
         process(args)
         time_end = time.time()
-        print ('Time end %s \n' % time_end)
-        print ('Time total %s, sec ' % str(round(time_end - time_start)))
+        print ('\nTime total %s, sec ' % str(round(time_end - time_start)))
 
     except KeyboardInterrupt:
         sys.exit(0)
