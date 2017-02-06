@@ -65,9 +65,10 @@ import curses
 import logging
 import os
 import sqlite3
-import time
+import datetime
 import sys
 import signal
+import time
 
 try:
     import urlparse
@@ -187,7 +188,7 @@ def to_float(value):
     return float(value) if value and value != '-' else 0.0
 
 
-def parse_log(lines, pattern):
+def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
     matches = (pattern.match(l) for l in iter(lines.readline, ''))
     records = (m.groupdict() for m in matches if m is not None)
     records = map_field('status', to_int, records)
@@ -272,26 +273,9 @@ def process_log(lines, pattern, processor, arguments):
     if filter_exp:
         records = (r for r in records if eval(filter_exp, {}, r))
 
-    # time_from_exp = arguments['--time-from']
-    # time_to_exp = arguments['--time-to']
-    # if time_from_exp and time_to_exp:
-    #     records = filter_time(arguments['--time-format'], time_from_exp, time_to_exp, records)
-
     processor.process(records)
 
-    # if time_from_exp and time_to_exp:
-    #     print ('Statistics for time period from %s to %s \n' % (time_from_exp, time_to_exp))
-
     print(processor.report())  # this will only run when start in --no-follow mode
-
-
-def filter_time(time_format, time_from_exp, time_to_exp, records):
-        time_from = time.strptime(time_from_exp, time_format)
-        time_to = time.strptime(time_to_exp, time_format)
-        for r in records:
-            t = time.strptime(r['time_local'].split()[0], time_format)
-            if time_to <= t >= time_from:
-                yield r
 
 
 def build_processor(arguments):
@@ -370,6 +354,100 @@ def setup_reporter(processor, arguments):
     signal.setitimer(signal.ITIMER_REAL, 0.1, interval)
 
 
+def filter_time_range(arguments, access_log, pattern):
+
+    time_from = arguments['--time-from']
+    time_to = arguments['--time-to']
+    time_format = arguments['--time-format']
+
+    print ('Try to get statistics for time period from %s to %s ' % (time_from, time_to))
+
+    with open(access_log) as f:
+        lines_total = len(f.readlines())
+
+    start = datetime.datetime.strptime(time_from, time_format)
+    end = datetime.datetime.strptime(time_to, time_format)
+
+    line_start, time_start = get_line_number(lines_total, access_log, pattern, time_format, start)
+    line_end, time_end = get_line_number(lines_total, access_log, pattern, time_format, end, False)
+
+    print ('Actual time start:' + str(time_start))
+    print ('Actual time end:' + str(time_end))
+
+    return line_start, line_end
+
+
+def get_line_number(lines_total, access_log, pattern, time_format, t_compare, time_start=True):
+
+    import linecache
+
+    min_border = 0
+    max_border = lines_total
+    line_number = 0
+    t = None
+
+    def get_time(number):
+        line = linecache.getline(access_log, number)
+        matches = pattern.match(line)
+        time_log = matches.groupdict()['time_local'].split()[0]
+        return datetime.datetime.strptime(time_log, time_format)
+
+    while True:
+        line_number = (max_border+min_border)/2
+
+        if line_number == 1 or line_number == lines_total:
+            break
+
+        t = get_time(line_number)
+
+        if t < t_compare:
+            min_border = line_number
+
+        if t > t_compare:
+            max_border = line_number
+
+        if t == t_compare or max_border - min_border == 1:
+            break
+
+    # return in case of first or last line
+    if line_number == 1 or line_number == lines_total:
+        return line_number, get_time(line_number)
+
+    prev_line_time = get_time(line_number-1)
+    next_line_time = get_time(line_number+1)
+
+    # get close time, if t_compare not found
+    if t != t_compare:
+        print ('Requested time %s did not find in the log. Getting closest time..' % t_compare)
+        if abs(prev_line_time-t) < abs(next_line_time-t):
+            line_number -= 1
+        else:
+            line_number += 1
+        return line_number, get_time(line_number)
+
+    # get first line of start time
+    if time_start:
+        if t == prev_line_time:
+            line_number -= 1
+            while prev_line_time == t:
+                line_number -= 1
+                prev_line_time = get_time(line_number)
+
+            line_number += 1
+            return line_number, get_time(line_number)
+
+    # get last line of end time
+    else:
+        if t == next_line_time:
+            line_number += 1
+            while next_line_time == t:
+                line_number += 1
+                next_line_time = get_time(line_number)
+
+            line_number -= 1
+            return line_number, get_time(line_number)
+
+
 def process(arguments):
     access_log = arguments['--access-log']
     log_format = arguments['--log-format']
@@ -402,6 +480,25 @@ def process(arguments):
     pattern = build_pattern(log_format)
     processor = build_processor(arguments)
     setup_reporter(processor, arguments)
+
+    if arguments['--no-follow']:
+        start, end = filter_time_range(arguments, access_log, pattern)
+
+        # # create temp file with only filtered data
+        import tempfile
+
+        temp = tempfile.TemporaryFile()
+        n = 0
+        for line in source:
+            n += 1
+            if n >= start:
+                temp.write(line)
+            if n > end:
+                break
+        source.close()
+        temp.seek(0)
+        source = temp
+
     process_log(source, pattern, processor, arguments)
 
 
@@ -417,7 +514,13 @@ def main():
     logging.debug('arguments:\n%s', args)
 
     try:
+        time_start = time.time()
+        print ('Time start %s \n' % time_start)
         process(args)
+        time_end = time.time()
+        print ('Time end %s \n' % time_end)
+        print ('Time total %s, sec ' % str(round(time_end - time_start)))
+
     except KeyboardInterrupt:
         sys.exit(0)
 
