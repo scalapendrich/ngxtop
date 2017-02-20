@@ -32,6 +32,7 @@ Options:
     --time-format <time format>,  nginx time format.  [default: %d/%b/%Y:%H:%M:%S]
     --time-from <time start>,  set left time border
     --time-to <time end>,  set right time border
+    --db-name <db-name>,   set dn name to save data [default:data.db]
 
 
 Examples:
@@ -204,13 +205,16 @@ def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
 # Records and statistic processor
 # =================================
 class SQLProcessor(object):
-    def __init__(self, report_queries, fields, index_fields=None):
+    def __init__(self, report_queries, fields, db_name, index_fields=None):
         self.begin = False
         self.report_queries = report_queries
         self.index_fields = index_fields if index_fields is not None else []
         self.column_list = ','.join(fields)
         self.holder_list = ','.join(':%s' % var for var in fields)
-        self.conn = sqlite3.connect(':memory:')
+        if not db_name:
+            self.conn = sqlite3.connect(':memory:')
+        else:
+            self.conn = sqlite3.connect('%s' % db_name)
         self.init_db()
 
     def process(self, records):
@@ -220,6 +224,7 @@ class SQLProcessor(object):
         with closing(self.conn.cursor()) as cursor:
             for r in records:
                 cursor.execute(insert, r)
+        self.conn.commit()
 
     def report(self):
         if not self.begin:
@@ -316,7 +321,7 @@ def build_processor(arguments):
     for field in fields:
         processor_fields.extend(field.split(','))
 
-    processor = SQLProcessor(report_queries, processor_fields)
+    processor = SQLProcessor(report_queries, processor_fields, arguments['--db-name'])
     return processor
 
 
@@ -427,22 +432,24 @@ def get_line_number(lines_total, access_log, pattern, time_format, t_compare, ti
     if time_start:
         if t == prev_line_time:
             line_number -= 1
-            while prev_line_time == t:
+            while prev_line_time == t and line_number != 1:
                 line_number -= 1
                 prev_line_time = get_time(line_number)
 
-            line_number += 1
+            if line_number != 1:
+                line_number += 1
             return line_number, get_time(line_number)
 
     # get last line of end time
     else:
         if t == next_line_time:
             line_number += 1
-            while next_line_time == t:
+            while next_line_time == t and line_number != lines_total:
                 line_number += 1
                 next_line_time = get_time(line_number)
 
-            line_number -= 1
+            if line_number != lines_total:
+                line_number -= 1
             return line_number, get_time(line_number)
 
 
