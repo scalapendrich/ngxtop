@@ -33,6 +33,7 @@ Options:
     --time-from <time start>,  set left time border
     --time-to <time end>,  set right time border
     --db-name <db-name>,   set dn name to save data [default:data.db]
+    --file-output <output file>,   [default:utput.stats]
 
 
 Examples:
@@ -113,6 +114,22 @@ DEFAULT_QUERIES = [
      ORDER BY %(--order-by)s DESC
      LIMIT %(--limit)s''')
 ]
+
+AGGREGATED = '''SELECT
+       request_path,
+       count(CASE WHEN status_type = 2 THEN 1 END)    AS count,
+       CAST(count(1) AS float) / CAST({count} AS float) * 100 AS percentage
+     FROM log
+     GROUP BY %(--group-by)s
+     HAVING %(--having)s
+     ORDER BY %(--order-by)s DESC
+     LIMIT %(--limit)s'''
+
+AGGREGATED_SUMMARY = '''SELECT
+       'sum',
+       count(CASE WHEN status_type = 2 THEN 1 END) AS count
+     FROM log'''
+
 
 DEFAULT_FIELDS = set(['status_type', 'bytes_sent', 'time_local'])
 
@@ -205,7 +222,10 @@ def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
 # Records and statistic processor
 # =================================
 class SQLProcessor(object):
-    def __init__(self, report_queries, fields, db_name, index_fields=None):
+    def __init__(self, report_queries, fields, db_name, aggr, file_output, index_fields=None):
+        # TODO: remove this shit after
+        self.file_output = file_output
+        self.aggr = aggr
         self.begin = False
         self.report_queries = report_queries
         self.index_fields = index_fields if index_fields is not None else []
@@ -244,6 +264,19 @@ class SQLProcessor(object):
                 columns = (d[0] for d in cursor.description)
                 result = tabulate.tabulate(cursor.fetchall(), headers=columns, tablefmt='orgtbl', floatfmt='.3f')
                 output.append('%s\n%s' % (label, result))
+
+            # save aggregated to file
+
+            with open(r'%s' % self.file_output, 'w') as f:
+                cursor.execute(AGGREGATED_SUMMARY)
+                data = cursor.fetchall()
+                d = data[0]
+                f.write(str(d[0]) + ',' + str(round(d[1], 2)) + ',' + '100' + '\n')
+                cursor.execute(self.aggr.format(count=count))
+                data = cursor.fetchall()
+                for d in data:
+                    f.write(str(d[0]) + ',' + str(d[1]) + ',' + str(round(d[2], 2)) + '\n')
+
         return '\n\n'.join(output)
 
     def init_db(self):
@@ -313,6 +346,7 @@ def build_processor(arguments):
     else:
         report_queries = [(name, query % arguments) for name, query in DEFAULT_QUERIES]
         fields = DEFAULT_FIELDS.union(set([arguments['--group-by']]))
+        AGGREGATED % arguments
 
     for label, query in report_queries:
         logging.info('query for "%s":\n %s', label, query)
@@ -321,7 +355,7 @@ def build_processor(arguments):
     for field in fields:
         processor_fields.extend(field.split(','))
 
-    processor = SQLProcessor(report_queries, processor_fields, arguments['--db-name'])
+    processor = SQLProcessor(report_queries, processor_fields, arguments['--db-name'], AGGREGATED % arguments, arguments['--file-output'])
     return processor
 
 
@@ -432,19 +466,21 @@ def get_line_number(lines_total, access_log, pattern, time_format, t_compare, ti
     if time_start:
         if t == prev_line_time:
             line_number -= 1
-            while prev_line_time == t and line_number != 1:
+            while prev_line_time == t and line_number > 1:
                 line_number -= 1
                 prev_line_time = get_time(line_number)
 
             if line_number != 1:
                 line_number += 1
             return line_number, get_time(line_number)
+        else:
+            return line_number, get_time(line_number)
 
     # get last line of end time
     else:
         if t == next_line_time:
             line_number += 1
-            while next_line_time == t and line_number != lines_total:
+            while next_line_time == t and line_number:
                 line_number += 1
                 next_line_time = get_time(line_number)
 
@@ -452,6 +488,8 @@ def get_line_number(lines_total, access_log, pattern, time_format, t_compare, ti
                 line_number -= 1
             return line_number, get_time(line_number)
 
+        else:
+            return line_number, get_time(line_number)
 
 def process(arguments):
     access_log = arguments['--access-log']
