@@ -35,7 +35,7 @@ def _print_result(filepath, handlers):
 
     with open(filepath, 'w') as f:
         for handler_data in handlers:
-            f.write('%s, %s \n' % (handler_data[0], handler_data[1]))
+            f.write('%s,%s \n' % (handler_data[0], handler_data[1]))
 
 def main(args):
 
@@ -84,7 +84,8 @@ def main(args):
         req_total_200 = int(db.execute(querry)[0][1])
 
         sql_prefix = "substr(request_path, 1, instr(ltrim(request_path, '/'), '/') + 1)"
-        sql_prefix_mobapi = "substr(request_path, 1, instr(ltrim(request_path, '/mobapi'), '/') + 8)"
+        #sql_prefix_mobapi = "substr(request_path, 1, instr(ltrim(request_path, '/mobapi'), '/') + 8)"
+        sql_prefix_mobapi = "substr(request_path, 1, instr(substr(request_path, 9), '/') + 8)"
 
         querries = {}
 
@@ -153,6 +154,7 @@ def main(args):
         total_processed_sum += result
         sum_static = result
         processed.append({'key': 'static_content', 'sum': result})
+        print (total_processed_sum)
 
         print 'sum, {total}, Total processed with status 200 (with/without static): {total}/{total_no_static}.  {percent}%% - categorized)'.format(
             total=req_total_200 - sum_static,
@@ -184,6 +186,7 @@ def main(args):
                  "and request_path not in ({mobapi_cat}) " \
                 "and request_path not in ({mobapi_cat_ns}) " \
                 "and request_path not in ({mobapi_compain_ns}) " \
+                "and request_path not in ({mobapi_compaign}) " \
                 "and request_path not in ({mobapi_brands_ns}) " \
                 "and request_path not in ({cat_ns}) " \
                 "and request_path not in ({compain_ns}) " \
@@ -204,6 +207,7 @@ def main(args):
                 mobapi_cat=querries['MobapiCategory'],
                 mobapi_cat_ns=querries['MobapiCategory_no_slash'],
                 mobapi_compain_ns=querries['MobapiCompaign_no_slash'],
+                mobapi_compaign=querries['MobapiCompaign'],
                 mobapi_brands_ns=querries['MobapiBrands_no_slash'],
                 cat_ns=querries['Category_no_slash'],
                 compain_ns=querries['Compaign_no_slash'],
