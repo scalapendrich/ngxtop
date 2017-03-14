@@ -192,7 +192,8 @@ def parse_request_path(record):
     else:
         uri = None
     result = urlparse.urlparse(uri).path if uri else None
-    if len(result) > 1:
+
+    if len(result) > 1 and result is not None:
         return result.rstrip('/')
     else:
         return result
