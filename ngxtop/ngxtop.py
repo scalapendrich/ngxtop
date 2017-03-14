@@ -32,8 +32,8 @@ Options:
     --time-format <time format>,  nginx time format.  [default: %d/%b/%Y:%H:%M:%S]
     --time-from <time start>,  set left time border
     --time-to <time end>,  set right time border
-    --db-name <db-name>,   set dn name to save data [default:data.db]
-    --file-output <output file>,   [default:utput.stats]
+    --db-name <db-name>,   set dn name to save data
+    --file-output <output file>
 
 
 Examples:
@@ -191,7 +191,11 @@ def parse_request_path(record):
         uri = ' '.join(record['request'].split(' ')[1:-1])
     else:
         uri = None
-    return urlparse.urlparse(uri).path if uri else None
+    result = urlparse.urlparse(uri).path if uri else None
+    if len(result) > 1:
+        return result.rstrip('/')
+    else:
+        return result
 
 
 def parse_status_type(record):
@@ -222,16 +226,13 @@ def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
 # Records and statistic processor
 # =================================
 class SQLProcessor(object):
-    def __init__(self, report_queries, fields, db_name, aggr, file_output, index_fields=None):
-        # TODO: remove this shit after
-        self.file_output = file_output
-        self.aggr = aggr
+    def __init__(self, report_queries, fields, db_name, index_fields=None):
         self.begin = False
         self.report_queries = report_queries
         self.index_fields = index_fields if index_fields is not None else []
         self.column_list = ','.join(fields)
         self.holder_list = ','.join(':%s' % var for var in fields)
-        if not db_name:
+        if db_name is None:
             self.conn = sqlite3.connect(':memory:')
         else:
             self.conn = sqlite3.connect('%s' % db_name)
@@ -246,7 +247,7 @@ class SQLProcessor(object):
                 cursor.execute(insert, r)
         self.conn.commit()
 
-    def report(self):
+    def report(self,):
         if not self.begin:
             return ''
         count = self.count()
@@ -265,19 +266,23 @@ class SQLProcessor(object):
                 result = tabulate.tabulate(cursor.fetchall(), headers=columns, tablefmt='orgtbl', floatfmt='.3f')
                 output.append('%s\n%s' % (label, result))
 
-            # save aggregated to file
+        return '\n\n'.join(output)
 
-            with open(r'%s' % self.file_output, 'w') as f:
+    def report_to_file(self, query, path_output):
+        if path_output is None:
+            return
+
+        count = self.count()
+        with closing(self.conn.cursor()) as cursor:
+            with open(path_output, 'w') as f:
                 cursor.execute(AGGREGATED_SUMMARY)
                 data = cursor.fetchall()
                 d = data[0]
                 f.write(str(d[0]) + ',' + str(round(d[1], 2)) + ',' + '100' + '\n')
-                cursor.execute(self.aggr.format(count=count))
+                cursor.execute(query.format(count=count))
                 data = cursor.fetchall()
                 for d in data:
                     f.write(str(d[0]) + ',' + str(d[1]) + ',' + str(round(d[2], 2)) + '\n')
-
-        return '\n\n'.join(output)
 
     def init_db(self):
         create_table = 'create table log (%s)' % self.column_list
@@ -346,7 +351,6 @@ def build_processor(arguments):
     else:
         report_queries = [(name, query % arguments) for name, query in DEFAULT_QUERIES]
         fields = DEFAULT_FIELDS.union(set([arguments['--group-by']]))
-        AGGREGATED % arguments
 
     for label, query in report_queries:
         logging.info('query for "%s":\n %s', label, query)
@@ -355,7 +359,7 @@ def build_processor(arguments):
     for field in fields:
         processor_fields.extend(field.split(','))
 
-    processor = SQLProcessor(report_queries, processor_fields, arguments['--db-name'], AGGREGATED % arguments, arguments['--file-output'])
+    processor = SQLProcessor(report_queries, processor_fields, arguments['--db-name'])
     return processor
 
 
@@ -491,6 +495,7 @@ def get_line_number(lines_total, access_log, pattern, time_format, t_compare, ti
         else:
             return line_number, get_time(line_number)
 
+
 def process(arguments):
     access_log = arguments['--access-log']
     log_format = arguments['--log-format']
@@ -543,6 +548,7 @@ def process(arguments):
         source = temp
 
     process_log(source, pattern, processor, arguments)
+    processor.report_to_file(AGGREGATED % arguments, arguments['--file-output'])
 
 
 def main():
