@@ -12,7 +12,7 @@ Options:
     --no-follow  ngxtop default behavior is to ignore current lines in log
                      and only watch for new lines as they are written to the access log.
                      Use this flag to tell ngxtop to process the current content of the access log instead.
-    -t <seconds>, --interval <seconds>  report interval when running in follow mode [default: 2.0]
+    -t <seconds>, --interval <seconds>  report interval when running in follow mode [default: 5.0]
 
     -g <var>, --group-by <var>  group by variable [default: request_path]
     -w <var>, --having <expr>  having clause [default: 1]
@@ -131,7 +131,7 @@ AGGREGATED_SUMMARY = '''SELECT
      FROM log'''
 
 
-DEFAULT_FIELDS = set(['status_type', 'bytes_sent', 'time_local'])
+DEFAULT_FIELDS = set(['status_type', 'bytes_sent', 'time_local', 'request_param'])
 
 
 # ======================
@@ -199,6 +199,16 @@ def parse_request_path(record):
         return result
 
 
+def parse_request_param(record):
+    if 'request_uri' in record:
+        uri = record['request_uri']
+    elif 'request' in record:
+        uri = ' '.join(record['request'].split(' ')[1:-1])
+    else:
+        uri = None
+    return urlparse.urlparse(uri).query if uri else None
+
+
 def parse_status_type(record):
     return record['status'] // 100 if 'status' in record else None
 
@@ -220,6 +230,7 @@ def parse_log(lines, pattern, time_from=None, time_to=None, time_format=None):
     records = map_field('bytes_sent', to_int, records)
     records = map_field('request_time', to_float, records)
     records = add_field('request_path', parse_request_path, records)
+    records = add_field('request_param', parse_request_param, records)
     return records
 
 
